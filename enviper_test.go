@@ -137,6 +137,35 @@ func (s *UnmarshalSuite) TestConfigWithEnvs() {
 	s.Equal("testptr3", c.QuuuxPtrUnset.Value)
 }
 
+func (s *UnmarshalSuite) TestConfigWithUnexportedField() {
+	s.setupFileConfig()
+	s.setupEnvConfig()
+	defer s.tearDownEnvConfig()
+
+	var c ConfigWithUnexportedField
+	e := enviper.New(s.v)
+	e.SetEnvPrefix("PREF")
+	s.Nil(e.Unmarshal(&c))
+
+	s.Equal("fooooo", c.Foo)
+	s.Equal("fooo", c.Nested.Foo)
+}
+
+func (s *UnmarshalSuite) TestConfigSlice() {
+	s.setupFileConfig()
+	s.setupEnvConfig()
+	defer s.tearDownEnvConfig()
+
+	var c Config
+	e := enviper.New(s.v)
+	e.SetTypeByDefaultValue(true)
+	e.SetEnvPrefix("PREF")
+	s.Nil(e.Unmarshal(&c))
+
+	s.Len(c.Slice, 2)
+	s.Equal([]map[string]interface{}{{"foo": "bar"}}, c.SliceMap)
+}
+
 func (s *UnmarshalSuite) setupFileConfig() {
 	cwd, _ := os.Getwd()
 	s.v.AddConfigPath(cwd)
@@ -193,12 +222,23 @@ type Config struct {
 		Quuux bool
 	}
 	PrimitiveMap map[string]string
+	Slice        []string
+	SliceMap     []map[string]interface{}
 
 	QUX                       `mapstructure:",squash"`
 	TagTest                   string `custom_tag:"TAG_TEST"`
 	TagValueWithOmitempty     string `mapstructure:",omitempty"`
 	TagValueWithNameOmitempty string `mapstructure:"tag_custom_name,omitempty"`
 	TagValueWithDash          string `mapstructure:"-"`
+}
+
+type ConfigWithUnexportedField struct {
+	Foo    string
+	bar    string
+	Nested struct {
+		Foo string
+		bar string
+	}
 }
 
 type QUX struct {

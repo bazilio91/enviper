@@ -1,10 +1,14 @@
 package enviper
 
 import (
+	"encoding/json"
+	"fmt"
+	"github.com/mitchellh/mapstructure"
+	"os"
 	"reflect"
 	"strings"
-
-	"github.com/mitchellh/mapstructure"
+	"time"
+	"unsafe"
 
 	"github.com/spf13/viper"
 )
@@ -40,9 +44,37 @@ func (e *Enviper) TagName() string {
 	return e.tagName
 }
 
+func SliceDecodeHook() mapstructure.DecodeHookFuncType {
+	return func(
+		f reflect.Type, // data type
+		t reflect.Type, // target data type
+		data interface{}, // raw data
+	) (interface{}, error) {
+		// Check if the data type matches the expected one
+		if f.Kind() != reflect.String {
+			return data, nil
+		}
+
+		if t.Kind() != reflect.Slice {
+			return data, nil
+		}
+
+		// Construct instance by reflect & unmarshal
+		target := reflect.New(t).Interface()
+		err := json.Unmarshal([]byte(data.(string)), &target)
+		if err != nil {
+			return data, nil
+		}
+
+		return target, nil
+	}
+}
+
 // Unmarshal unmarshals the config into a Struct just like viper does.
 // The difference between enviper and viper is in automatic overriding data from file by data from env variables
 func (e *Enviper) Unmarshal(rawVal interface{}, opts ...viper.DecoderConfigOption) error {
+	opts = append(opts, viper.DecodeHook(SliceDecodeHook()))
+
 	if e.TagName() != defaultTagName {
 		opts = append(opts, func(c *mapstructure.DecoderConfig) {
 			c.TagName = e.TagName()
@@ -110,7 +142,9 @@ func (e *Enviper) bindEnvs(in interface{}, prev ...string) {
 				tv = t.Name
 			}
 
-			e.bindEnvs(fv.Interface(), append(prev, tv)...)
+			if fv.CanInterface() {
+				e.bindEnvs(fv.Interface(), append(prev, tv)...)
+			}
 		}
 	case reflect.Map:
 		iter := ifv.MapRange()
@@ -119,10 +153,99 @@ func (e *Enviper) bindEnvs(in interface{}, prev ...string) {
 				e.bindEnvs(iter.Value().Interface(), append(prev, key)...)
 			}
 		}
+	case reflect.Slice:
+		env := strings.Join(prev, ".")
+		_ = e.Viper.BindEnv(env)
+
+		key := env
+
+		rs := reflect.ValueOf(e.Viper).Elem().FieldByName("envKeyReplacer")
+		envKeyReplacer := reflect.NewAt(rs.Type(), unsafe.Pointer(rs.UnsafeAddr())).Interface().(*viper.StringReplacer)
+
+		if *envKeyReplacer != nil {
+			key = (*envKeyReplacer).Replace(key)
+		}
+
+		envPrefix := reflect.ValueOf(e.Viper).Elem().FieldByName("envPrefix").String()
+
+		if envPrefix != "" {
+			key = strings.ToUpper(envPrefix + "_" + key)
+		}
+
+		key = strings.ToUpper(key)
+
+		envs := os.Environ()
+
+		values := []string{}
+		for _, s := range envs {
+			if strings.HasPrefix(s, fmt.Sprintf("%s_", key)) {
+				k := strings.Split(s, "=")[0]
+				values = append(values, os.Getenv(k))
+			}
+		}
+
+		tp, castedByViper := supportedCast(in)
+
+		e.Viper.SetDefault(env, tp)
+
+		if castedByViper {
+			os.Setenv(key, strings.Join(values, " "))
+		} else {
+			// Marshal slice into json to be decoded by hook
+			decodedValues := []interface{}{}
+			for _, str := range values {
+				var decodedValue interface{}
+				err := json.Unmarshal([]byte(str), &decodedValue)
+				if err != nil {
+					decodedValues = append(decodedValues, str)
+				} else {
+					decodedValues = append(decodedValues, decodedValue)
+				}
+			}
+
+			data, _ := json.Marshal(decodedValues)
+			os.Setenv(key, string(data))
+		}
 	default:
 		env := strings.Join(prev, ".")
 		// Viper.BindEnv will never return error
 		// because env is always non empty string
 		_ = e.Viper.BindEnv(env)
 	}
+}
+
+func supportedCast(in interface{}) (interface{}, bool) {
+	castedByViper := true
+	var tp interface{}
+	switch t := in.(type) {
+	case bool:
+		tp = t
+	case string:
+		tp = t
+	case int32, int16, int8, int:
+		tp = t
+	case uint:
+		tp = t
+	case uint32:
+		tp = t
+	case uint64:
+		tp = t
+	case int64:
+		tp = t
+	case float64, float32:
+		tp = t
+	case time.Time:
+		tp = t
+	case time.Duration:
+		tp = t
+	case []string:
+		tp = t
+	case []int:
+		tp = t
+	default:
+		castedByViper = false
+		tp = t
+	}
+
+	return tp, castedByViper
 }

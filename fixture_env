@@ -7,3 +7,7 @@ PREF_TAG_TEST=imTheValueByCustomTag
 PREF_TAGVALUEWITHOMITEMPTY=imTheValueWithOmitempty
 PREF_TAG_CUSTOM_NAME=imTheValueWithCustomName
 PREF_TAGVALUEWITHDASH=imTheValueWithDash
+PREF_NESTED_FOO=fooo
+PREF_SLICE_1=slice1
+PREF_SLICE_0=slice0
+PREF_SLICEMAP_1={"foo":"bar"}
